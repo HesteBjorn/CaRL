@@ -98,6 +98,7 @@ bash training.sh
 
 <h2 id="evaluation">📊 Evaluation</h2>
 
+The model files can be downloaded on [here](https://s3.eu-central-1.amazonaws.com/avg-projects-2/carl/Think2Drive_checkpoints.zip).
 Evaluate the model on the CARLA Leaderboard:
 
 ```Shell
