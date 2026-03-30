@@ -331,7 +331,17 @@ class SimpleReward(object):
 
     self.first_frame = False
 
-    info = {'n_steps': 0, 'suggest': 0, 'timeout': timeout, 'infraction_type': ''}
+    info = {
+        'n_steps': 0,
+        'suggest': 0,
+        'timeout': timeout,
+        'infraction_type': '',
+        'reward_speed_penalty': float(speed_penalty),
+        'reward_ttc_penalty': float(ttc_penalty),
+        'reward_comfort_penalty': float(comfort_penalty),
+        'reward_lane_centering': float(perc_dist_to_centerline),
+        'reward_outside_lanes': float(outside_lanes),
+    }
     if termination:
       if route_deviation:
         info['infraction_type'] = 'route_deviation'
