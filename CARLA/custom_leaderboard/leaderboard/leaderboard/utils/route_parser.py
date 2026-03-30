@@ -36,6 +36,39 @@ def convert_elem_to_transform(elem):
     )
 
 
+def infer_waypoint_yaw(waypoint_nodes, index):
+    """Infer a waypoint yaw from neighboring positions when it is not stored in the XML."""
+    current = waypoint_nodes[index]
+    current_x = float(current.attrib['x'])
+    current_y = float(current.attrib['y'])
+
+    neighbor_indices = []
+    if index + 1 < len(waypoint_nodes):
+        neighbor_indices.append(index + 1)
+    if index - 1 >= 0:
+        neighbor_indices.append(index - 1)
+
+    for neighbor_index in neighbor_indices:
+        neighbor = waypoint_nodes[neighbor_index]
+        dx = float(neighbor.attrib['x']) - current_x
+        dy = float(neighbor.attrib['y']) - current_y
+        if dx != 0.0 or dy != 0.0:
+            return math.degrees(math.atan2(dy, dx))
+
+    return 0.0
+
+
+def compute_route_length(route_points):
+    """Compute route length from the parsed waypoint transforms."""
+    route_length = 0.0
+    previous_location = None
+    for transform, _ in route_points:
+        if previous_location is not None:
+            route_length += transform.location.distance(previous_location)
+        previous_location = transform.location
+    return route_length
+
+
 class RouteParser(object):
 
     """
@@ -120,18 +153,28 @@ class RouteParser(object):
 
             # The list of carla.Location that serve as keypoints on this route
             positions = []
-            for position in route.find('waypoints').iter('position'):
+            waypoint_nodes = list(route.find('waypoints').iter('position'))
+            for idx, position in enumerate(waypoint_nodes):
+                # Older LEAD-style route files only store x/y/z positions.
+                # Fall back to inferred yaw and default route options so both
+                # LEAD and CaRL route bundles remain usable.
                 carla_loc = carla.Location(x=float(position.attrib['x']),
                                            y=float(position.attrib['y']),
                                            z=float(position.attrib['z']))
-                carla_rot = carla.Rotation(pitch=float(position.attrib['pitch']),
-                                           yaw=float(position.attrib['yaw']),
-                                           roll=float(position.attrib['roll']))
+                carla_rot = carla.Rotation(
+                    pitch=float(position.attrib.get('pitch', 0.0)),
+                    yaw=float(position.attrib.get('yaw', infer_waypoint_yaw(waypoint_nodes, idx))),
+                    roll=float(position.attrib.get('roll', 0.0)),
+                )
                 carla_transform = carla.Transform(carla_loc, carla_rot)
-                road_option = RoadOption(int(position.attrib['command']))
+                road_option = RoadOption(
+                    int(position.attrib['command'])
+                    if 'command' in position.attrib
+                    else RoadOption.LANEFOLLOW
+                )
                 positions.append((carla_transform, road_option))
             route_config.keypoints = positions
-            route_config.route_length = float(route.attrib['length'])
+            route_config.route_length = float(route.attrib['length']) if 'length' in route.attrib else compute_route_length(positions)
             # The list of ScenarioConfigurations that store the scenario's data
             scenario_configs = []
             for scenario in route.find('scenarios').iter('scenario'):
