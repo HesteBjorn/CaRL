@@ -70,16 +70,16 @@ class SimpleReward(object):
     #                           'yaw_rate': [],
     #                           'yaw_acceleration': []}
 
-  # We keep collision_with_pedestrian to have a common interface but it is not used.
+  # We keep collision_with_pedestrian for interface compatibility and use it as an optional collision hint.
   def get(
       self,
       timestamp,
       waypoint_route,
-      collision_with_pedestrian=None,  # pylint: disable=locally-disabled, unused-argument
+      collision_with_pedestrian=None,
       vehicles_all=(),
       walkers_all=(),
       static_all=(),
-      perc_off_road=None):  # pylint: disable=locally-disabled, unused-argument
+      perc_off_road=None):
 
     #########################################################################
     # Compute termination conditions and terminal reward.
@@ -88,6 +88,9 @@ class SimpleReward(object):
     ego_vehicle_transform = self.vehicle.get_transform()
     ev_vel = self.vehicle.get_velocity()  # in m/s
     ev_speed = np.linalg.norm(np.array([ev_vel.x, ev_vel.y]))
+    vehicles_all, walkers_all, static_all = self._resolve_actor_lists(vehicles_all, walkers_all, static_all)
+    if perc_off_road is None:
+      perc_off_road = 0.0
 
     # Done condition 1: vehicle blocked
     ego_blocked = self.block_detector.tick(self.vehicle, timestamp) is not None
@@ -112,7 +115,14 @@ class SimpleReward(object):
       ran_red_light = False
 
     # # Done condition 4: collision
-    collision_detected = self.collision_detector.tick(self.vehicle, timestamp) is not None
+    collision_from_sensor = self.collision_detector.tick(self.vehicle, timestamp) is not None
+    collision_from_hint = False
+    if collision_with_pedestrian is not None:
+      collision_from_hint = bool(np.asarray(collision_with_pedestrian).reshape(-1)[0])
+    collision_detected = collision_from_sensor or collision_from_hint
+    if not collision_detected and not self.first_frame:
+      collision_detected = self.overlap_collision_with_dynamic_actors(ego_vehicle_transform, ego_vehicle_location,
+                                                                      ev_speed, vehicles_all, walkers_all)
 
     # Done condition 5: run stop sign
     stop_criteria = self.stop_infraction_detector.tick(self.vehicle)
@@ -504,6 +514,49 @@ class SimpleReward(object):
 
     fraction_of_speed = np.clip(ego_speed / frame_mean_speed, a_min=0.0, a_max=1.0)
     return fraction_of_speed
+
+  def _resolve_actor_lists(self, vehicles_all, walkers_all, static_all):
+    if len(vehicles_all) > 0 or len(walkers_all) > 0 or len(static_all) > 0:
+      return vehicles_all, walkers_all, static_all
+
+    actors = self.world.get_actors()
+    return actors.filter('*vehicle*'), actors.filter('*walker*'), actors.filter('*static*')
+
+  def _build_world_bounding_box(self, actor, actor_transform):
+    actor_bb_center = actor_transform.transform(actor.bounding_box.location)
+    actor_bb = carla.BoundingBox(actor_bb_center, actor.bounding_box.extent)
+    actor_bb.rotation = carla.Rotation(
+        pitch=rl_u.normalize_angle_degree(actor.bounding_box.rotation.pitch + actor_transform.rotation.pitch),
+        yaw=rl_u.normalize_angle_degree(actor.bounding_box.rotation.yaw + actor_transform.rotation.yaw),
+        roll=rl_u.normalize_angle_degree(actor.bounding_box.rotation.roll + actor_transform.rotation.roll))
+    return actor_bb
+
+  def overlap_collision_with_dynamic_actors(self, ego_vehicle_transform, ego_vehicle_location, ev_speed, vehicles_all,
+                                            walkers_all):
+    ego_bounding_box = self._build_world_bounding_box(self.vehicle, ego_vehicle_transform)
+
+    for actor in [*vehicles_all, *walkers_all]:
+      if actor.id == self.vehicle.id:
+        continue
+
+      try:
+        actor_transform = actor.get_transform()
+        actor_location = actor_transform.location
+        actor_speed = actor.get_velocity().length()
+      except RuntimeError:
+        continue
+
+      # Skip clearly far actors and stationary overlaps due spawn jitter.
+      if ego_vehicle_location.distance(actor_location) > 8.0:
+        continue
+      if ev_speed < 0.05 and actor_speed < 0.05:
+        continue
+
+      actor_bounding_box = self._build_world_bounding_box(actor, actor_transform)
+      if rl_u.check_obb_intersection(ego_bounding_box, actor_bounding_box):
+        return True
+
+    return False
 
   # TODO vectorize this function with numpy
   def vehicle_too_close(self, ego_vehicle_transform, speed, ego_control, vehicles_all, walkers_all):
