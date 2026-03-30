@@ -267,9 +267,11 @@ class SimpleReward(object):
       terminal_reward = self.config.terminal_reward
       if self.config.use_termination_hint:
         if self.config.use_rl_termination_hint:
-          condition = (collision_detected or is_vehicle_too_close or ran_red_light)
+          condition = (collision_detected or is_vehicle_too_close or ran_red_light
+                       or route_deviation or route_deviation_2)
         else:
-          condition = (collision_detected or is_vehicle_too_close)
+          condition = (collision_detected or is_vehicle_too_close
+                       or route_deviation or route_deviation_2)
 
         if condition:
           terminal_reward -= self.config.terminal_hint
