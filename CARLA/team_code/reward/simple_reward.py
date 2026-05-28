@@ -266,15 +266,22 @@ class SimpleReward(object):
     if termination:
       terminal_reward = self.config.terminal_reward
       if self.config.use_termination_hint:
+        timeout_blocked = (
+            getattr(self.config, 'timeout_and_blocked_terminalhint', False)
+            and (timeout or ego_blocked))
         if self.config.use_rl_termination_hint:
           condition = (collision_detected or is_vehicle_too_close or ran_red_light
-                       or ran_stop_sign or route_deviation or route_deviation_2)
+                       or ran_stop_sign or route_deviation or route_deviation_2
+                       or timeout_blocked)
         else:
           condition = (collision_detected or is_vehicle_too_close
-                       or ran_stop_sign or route_deviation or route_deviation_2)
+                       or ran_stop_sign or route_deviation or route_deviation_2
+                       or timeout_blocked)
 
         if condition:
           terminal_reward -= self.config.terminal_hint
+    if truncation:
+      terminal_reward += getattr(self.config, 'success_reward', 0.0)
 
     current_route_completion = self.route_completion.update(self.vehicle)
     progress_reward = current_route_completion - self.last_route_completion
